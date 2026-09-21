@@ -1,0 +1,64 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-app_starter}
+      POSTGRES_USER: ${POSTGRES_USER:-app_starter}
+      # Disposable local development only; never use trust in shared/staging/production.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ./apps/backend
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment:
+      APP_NAME: App Starter API
+      DATABASE_HOST: ${DATABASE_HOST:-db}
+      DATABASE_PORT: ${DATABASE_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-app_starter}
+      POSTGRES_USER: ${POSTGRES_USER:-app_starter}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready', timeout=5)"]
+      interval: 5s
+      timeout: 6s
+      retries: 10
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  frontend:
+    build:
+      context: ./apps/frontend
+    environment:
+      BACKEND_URL: ${BACKEND_URL:-http://backend:8000}
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/', { signal: AbortSignal.timeout(4000) }).then(async response => { if (!response.ok) throw new Error('Frontend unavailable'); await response.text(); }).catch(() => process.exit(1))"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    ports:
+      - "127.0.0.1:3000:3000"
+
+volumes:
+  postgres_data:

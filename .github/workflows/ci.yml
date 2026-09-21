@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+        working-directory: apps/backend
+      - name: Lint backend
+        run: ruff check .
+        working-directory: apps/backend
+      - name: Check backend formatting
+        run: ruff format --check .
+        working-directory: apps/backend
+      - name: Run backend unit tests
+        run: pytest -m 'not integration'
+        working-directory: apps/backend
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: apps/frontend
+      - name: Run frontend tests
+        run: npm run test:run
+        working-directory: apps/frontend
+      - name: Lint frontend
+        run: npm run lint
+        working-directory: apps/frontend
+      - name: Run frontend type checks
+        run: npm run typecheck
+        working-directory: apps/frontend
+      - name: Build frontend
+        run: npm run build
+        working-directory: apps/frontend
+
+  compose-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose
+        run: docker compose config --quiet
+      - name: Build and start the stack
+        run: docker compose up --build --wait --wait-timeout 120
+      - name: Run database integration tests
+        run: docker compose exec -T backend pytest -m integration
+      - name: Verify published endpoints and frontend to backend communication
+        run: python3 scripts/smoke.py
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=100
+      - name: Stop the stack
+        if: always()
+        run: docker compose down
